@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>QR Table — UPI + WhatsApp Order Demo</title>
+</head>
+<body>
+  <h2>Menu</h2>
+  <div id="menu">
+    <!-- Example items -->
+    <button data-id="1" data-name="Paneer Momos" data-price="120">Add Paneer Momos — ₹120</button>
+    <button data-id="2" data-name="Veg Burger" data-price="150">Add Veg Burger — ₹150</button>
+    <button data-id="3" data-name="French Fries" data-price="90">Add French Fries — ₹90</button>
+  </div>
+
+  <h3>Cart (Table #: <span id="tableNo">5</span>)</h3>
+  <ul id="cartList"></ul>
+  <p>Total: ₹<span id="total">0</span></p>
+
+  <label>
+    Table No:
+    <input id="tableInput" type="number" value="5" min="1"/>
+  </label>
+
+  <br/><br/>
+  <button id="payBtn">Pay via UPI & Notify</button>
+
+<script>
+  // === CONFIGURE THESE ===
+  const MERCHANT_VPA = "yourmerchant@bank"; // aapka UPI VPA (change this)
+  const MERCHANT_NAME = "Aapka Restaurant"; // merchant name shown in UPI note
+  const WHATSAPP_NUMBER = "91XXXXXXXXXX";   // 91 + phone number (no + or dashes) OR leave empty to open generic wa.me/?text=
+
+  // === CART LOGIC ===
+  const cart = [];
+  const menuButtons = document.querySelectorAll('#menu button');
+  menuButtons.forEach(btn=>{
+    btn.addEventListener('click', ()=> {
+      const id = btn.dataset.id;
+      const name = btn.dataset.name;
+      const price = Number(btn.dataset.price);
+      cart.push({id, name, price});
+      renderCart();
+    });
+  });
+
+  function renderCart(){
+    const list = document.getElementById('cartList');
+    list.innerHTML = '';
+    cart.forEach((it, i)=>{
+      const li = document.createElement('li');
+      li.textContent = `${it.name} — ₹${it.price} `;
+      const rem = document.createElement('button');
+      rem.textContent = 'Remove';
+      rem.onclick = ()=> { cart.splice(i,1); renderCart(); };
+      li.appendChild(rem);
+      list.appendChild(li);
+    });
+    document.getElementById('total').textContent = getTotal();
+  }
+
+  function getTotal(){
+    return cart.reduce((s,i)=>s+i.price, 0);
+  }
+
+  // === Build UPI deep link (NPCI spec) ===
+  function buildUpiLink({pa, pn, am, tn}) {
+    // pa=payee vpa, pn=payee name, am=amount, tn=transaction note, cu=INR
+    const params = new URLSearchParams();
+    if (pa) params.set('pa', pa);
+    if (pn) params.set('pn', pn);
+    if (am) params.set('am', am.toFixed(2));
+    if (tn) params.set('tn', tn);
+    params.set('cu', 'INR');
+    return `upi://pay?${params.toString()}`;
+  }
+
+  // === Build WhatsApp link with prefilled message ===
+  function buildWhatsAppLink(number, message) {
+    const encoded = encodeURIComponent(message);
+    if(number && number.length>0) {
+      return `https://wa.me/${number}?text=${encoded}`;
+    } else {
+      return `https://wa.me/?text=${encoded}`;
+    }
+  }
+
+  // === Payment button handler ===
+  document.getElementById('payBtn').addEventListener('click', ()=>{
+    if(cart.length===0){ alert('Cart khaali hai'); return; }
+    const tableNo = document.getElementById('tableInput').value || document.getElementById('tableNo').textContent;
+    const itemsText = cart.map(i=> `${i.name} (₹${i.price})`).join('; ');
+    const amount = getTotal();
+
+    // transaction note: include table no and short items summary
+    const txnNote = `Table ${tableNo} | ${itemsText}`.slice(0,80); // tn length limited — keep short
+
+    // 1) build upi link
+    const upiUrl = buildUpiLink({pa: MERCHANT_VPA, pn: MERCHANT_NAME, am: amount, tn: txnNote});
+    console.log('UPI URL:', upiUrl);
+
+    // 2) build whatsapp message
+    const message = `New Order\nTable: ${tableNo}\nItems: ${itemsText}\nTotal: ₹${amount}\n(UPI payment request sent: ${amount})`;
+    const waUrl = buildWhatsAppLink(WHATSAPP_NUMBER, message);
+
+    // 3) Open UPI link first (this should open UPI app on mobile). Then open WhatsApp.
+    // Note: window.location = upiUrl will try to open the UPI app.
+    // We'll open UPI in a new window/tab (mobile will route to app). Then open WhatsApp.
+    // On some browsers, sequential opens may be blocked; user interaction (button click) helps.
+    try {
+      // open UPI
+      window.location.href = upiUrl;
+
+      // Also open whatsapp in a small delay so it doesn't interrupt the UPI intent on some devices
+      setTimeout(()=> {
+        window.open(waUrl, '_blank');
+      }, 800); // 0.8s delay
+    } catch(e) {
+      alert('UPI open failed — try manually. ' + e);
+      window.open(waUrl, '_blank');
+    }
+
+    // Optional: you can also POST order to your server here for record-keeping
+    // fetch('/api/orders', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({tableNo, cart, amount})})
+  });
+</script>
+</body>
+</html>
